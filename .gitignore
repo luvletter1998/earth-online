@@ -1,0 +1,5 @@
+node_modules/
+dist/
+earth_online.db
+.env
+.DS_Store
