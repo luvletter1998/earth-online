@@ -1,9 +1,5 @@
-const BASE = window.location.hostname === 'localhost'
-  ? 'http://localhost:3001/api'
-  : 'https://REPLACE_WITH_RENDER_URL.onrender.com/api';
-
+const BASE = 'https://earth-online.onrender.com/api';
 const token = () => localStorage.getItem('token');
-
 export async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...opts.headers };
   const t = token(); if (t) headers['Authorization'] = `Bearer ${t}`;

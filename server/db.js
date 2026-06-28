@@ -1,40 +1,75 @@
-const knex = require('knex')({
-  client: 'better-sqlite3',
-  connection: { filename: './earth_online.db' },
-  useNullAsDefault: true
-});
-module.exports = knex;
+// Using a simple JSON file database - no native compilation needed
+const fs = require('fs');
+const path = require('path');
+const DB_PATH = path.join(__dirname, '..', 'data.json');
 
-(async () => {
-  const hasUsers = await knex.schema.hasTable('users');
-  if (!hasUsers) {
-    await knex.schema.createTable('users', t => {
-      t.increments('id'); t.string('username', 50).unique().notNullable();
-      t.string('password_hash', 255).notNullable(); t.string('avatar_url', 255).defaultTo('');
-      t.integer('level').defaultTo(1); t.integer('points').defaultTo(0); t.timestamp('created_at').defaultTo(knex.fn.now());
-    });
+let data = { users: [], achievements: [], user_achievements: [] };
+
+// Load existing data
+try { data = JSON.parse(fs.readFileSync(DB_PATH, 'utf-8')); }
+catch { save(); }
+
+function save() { fs.writeFileSync(DB_PATH, JSON.stringify(data, null, 2)); }
+
+const db = {
+  // Users
+  async findUser(username) { return data.users.find(u => u.username === username) || null; },
+  async createUser(user) {
+    const u = { id: data.users.length + 1, ...user, level: 1, points: 0, created_at: new Date().toISOString() };
+    data.users.push(u); save(); return u;
+  },
+  async getUser(id) { return data.users.find(u => u.id === id) || null; },
+  async updateUser(id, updates) {
+    const idx = data.users.findIndex(u => u.id === id);
+    if (idx >= 0) { Object.assign(data.users[idx], updates); save(); }
+  },
+
+  // Achievements
+  async getAchievements(category, rarity) {
+    let list = data.achievements;
+    if (category) list = list.filter(a => a.category === category);
+    if (rarity) list = list.filter(a => a.rarity === rarity);
+    return list.sort((a, b) => b.points - a.points);
+  },
+  async getAchievement(id) { return data.achievements.find(a => a.id === id) || null; },
+  async createAchievement(ach) {
+    const a = { id: data.achievements.length + 1, ...ach, created_at: new Date().toISOString() };
+    data.achievements.push(a); save(); return a;
+  },
+  async getAchievementCount() { return data.achievements.length; },
+
+  // User Achievements
+  async findUserAchievement(userId, achId) {
+    return data.user_achievements.find(ua => ua.user_id === userId && ua.achievement_id === achId) || null;
+  },
+  async addUserAchievement(ua) {
+    data.user_achievements.push({ id: data.user_achievements.length + 1, ...ua, unlocked_at: new Date().toISOString() });
+    save();
+  },
+  async getUserAchievements(userId) {
+    return data.user_achievements
+      .filter(ua => ua.user_id === userId)
+      .map(ua => {
+        const ach = data.achievements.find(a => a.id === ua.achievement_id);
+        return ach ? { ...ach, unlocked_at: ua.unlocked_at, story: ua.story, is_custom: ua.is_custom } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.unlocked_at) - new Date(a.unlocked_at));
+  },
+
+  // Leaderboard
+  async getLeaderboard() {
+    return data.users
+      .map(u => ({ id: u.id, username: u.username, points: u.points, level: u.level }))
+      .sort((a, b) => b.points - a.points).slice(0, 50);
   }
-  const hasAch = await knex.schema.hasTable('achievements');
-  if (!hasAch) {
-    await knex.schema.createTable('achievements', t => {
-      t.increments('id'); t.string('category', 20).notNullable(); t.string('title', 100).notNullable();
-      t.text('description'); t.string('icon', 10); t.integer('points').defaultTo(10);
-      t.string('rarity', 10).defaultTo('普通'); t.text('unlock_condition'); t.timestamp('created_at').defaultTo(knex.fn.now());
-    });
-  }
-  const hasUA = await knex.schema.hasTable('user_achievements');
-  if (!hasUA) {
-    await knex.schema.createTable('user_achievements', t => {
-      t.increments('id'); t.integer('user_id').references('id').inTable('users');
-      t.integer('achievement_id').references('id').inTable('achievements');
-      t.timestamp('unlocked_at').defaultTo(knex.fn.now()); t.text('story'); t.boolean('is_custom').defaultTo(false);
-    });
-  }
-  const count = await knex('achievements').count('id as c').first();
-  if (count.c === 0) {
-    const seeds = require('./seeds/achievements');
-    await knex('achievements').insert(seeds);
-    console.log('Seeded ' + seeds.length + ' achievements');
-  }
-  console.log('Database ready');
-})();
+};
+
+// Seed achievements if empty
+if (data.achievements.length === 0) {
+  data.achievements = require('./seeds/achievements').map((a, i) => ({ id: i + 1, ...a }));
+  save();
+  console.log('Seeded ' + data.achievements.length + ' achievements');
+}
+
+module.exports = db;
